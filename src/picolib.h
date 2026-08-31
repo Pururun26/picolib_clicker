@@ -1,9 +1,9 @@
-
 #ifndef PICOLIB_H
 #define PICOLIB_H
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include "picolib_conf.h"
 
 #ifdef __cplusplus
@@ -47,6 +47,7 @@ void picolib_load_font(const char* filepath);
 void picolib_load_sounds();
 
 // --- Основные функции ---
+void init(void);
 void update(void);
 void draw(void);
 
@@ -79,6 +80,58 @@ picolib_vec2 camera(int16_t x, int16_t y);
 // --- API для звука ---
 // Проигрывает звук по индексу
 void sfx(int index);
+
+// --- API для карты .csv
+extern uint8_t sprite_flags[SPRITE_COUNT]; // флаги для каждого спрайта
+
+#if PICOLIB_USE_MAP == 1
+extern uint8_t map[MAP_ROWS][MAP_COLS];    // карта (только ID тайлов)
+
+void map_draw(int celx, int cely, int sx, int sy, int celw, int celh, uint8_t layer);
+void map_full(void);
+void map_full_layer(uint8_t layer);
+uint8_t mget(int x, int y);
+void mset(int x, int y, uint8_t id);
+#endif
+
+// ============================================================
+//                    СОХРАНЕНИЕ / ЗАГРУЗКА ДАННЫХ (API)
+// ============================================================
+#if PICOLIB_USE_SAVE == 1
+// --- Хранилище ---
+
+void save(uint8_t pos, uint64_t value);
+uint64_t load(uint8_t pos);
+// Проверяет есть ли файл
+bool is_save(void);
+
+// --- Текстовые файлы ---
+
+// Сохраняет текстовую строку в файл. Возвращает true при успехе, иначе false.
+bool save_text(const char *fileName, const char *text);
+
+// Загружает текстовый файл в память. Возвращает строку (выделенную память).
+// Возвращает NULL, если файл не найден или ошибка.
+char* load_text(const char* fileName);
+
+// --- Бинарные файлы ---
+
+// Сохраняет бинарные данные в файл. Возвращает true при успехе, иначе false.
+bool save_data(const char *fileName, void *data, int bytesToWrite);
+
+// Загружает бинарный файл в память. Размер файла записывается в *bytesRead.
+// Возвращает указатель на массив байтов (выделенную память) или NULL при ошибке.
+unsigned char* load_data(const char* fileName, int* bytesRead);
+
+// --- Освобождение памяти ---
+
+// Освобождает память, выделенную load_text().
+void unload_text(char* text);
+
+// Освобождает память, выделенную load_data().
+void unload_data(unsigned char* data);
+#endif
+
 
 // --- API для столкновение ---
 bool col_rect(Rect* a, Rect* b);
