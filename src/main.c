@@ -1,9 +1,27 @@
 #include "picolib.h"
-#include "stdio.h"
 #include <math.h>
 #include <time.h>
 
 #define SAVE_FILE "save.txt"
+// Определяем слоты для каждой переменной (0–63)
+#define SLOT_WHITE_PIXELS      0
+#define SLOT_GREEN_PIXELS      1
+#define SLOT_GREEN_PRICE       2
+#define SLOT_RED_PIXELS        3
+#define SLOT_RED_PRICE         4
+#define SLOT_YELLOW_PIXELS     5
+#define SLOT_YELLOW_PRICE      6
+#define SLOT_PINK_PIXELS       7
+#define SLOT_PINK_PRICE        8
+#define SLOT_DARKBLUE_PIXELS   9
+#define SLOT_DARKBLUE_PRICE    10
+#define SLOT_DARKPURPLE_PIXELS 11
+#define SLOT_DARKPURPLE_PRICE  12
+#define SLOT_PEACH_PIXELS      13
+#define SLOT_PEACH_PRICE       14
+#define SLOT_PICO_PIXELS       15
+#define SLOT_PICO_PRICE        16
+#define SLOT_ACCUMULATOR       17   // double → храним как uint64_t
 
 // INIT
 picolib_mouse m;
@@ -139,68 +157,68 @@ bool first_update = true;
 double production_per_second = 0.0;
 
 
-int color = 2;
+void save_game(void) {
+    // Сохраняем целочисленные поля
+    save(SLOT_WHITE_PIXELS, pixWhite.pixels);
+    save(SLOT_GREEN_PIXELS, pixGreen.pixels);
+    save(SLOT_GREEN_PRICE, pixGreen.price);
+    save(SLOT_RED_PIXELS, pixRed.pixels);
+    save(SLOT_RED_PRICE, pixRed.price);
+    save(SLOT_YELLOW_PIXELS, pixYellow.pixels);
+    save(SLOT_YELLOW_PRICE, pixYellow.price);
+    save(SLOT_PINK_PIXELS, pixPink.pixels);
+    save(SLOT_PINK_PRICE, pixPink.price);
+    save(SLOT_DARKBLUE_PIXELS, pixDarkBlue.pixels);
+    save(SLOT_DARKBLUE_PRICE, pixDarkBlue.price);
+    save(SLOT_DARKPURPLE_PIXELS, pixDarkPurple.pixels);
+    save(SLOT_DARKPURPLE_PRICE, pixDarkPurple.price);
+    save(SLOT_PEACH_PIXELS, pixLightPeach.pixels);
+    save(SLOT_PEACH_PRICE, pixLightPeach.price);
+    save(SLOT_PICO_PIXELS, pixPico.pixels);
+    save(SLOT_PICO_PRICE, pixPico.price);
 
-void save_game() {
-    FILE* f = fopen(SAVE_FILE, "w");
-    if (f == NULL) return;
+    // Сохраняем double через union
+    union { double d; uint64_t u; } conv;
+    conv.d = production_accumulator;
+    save(SLOT_ACCUMULATOR, conv.u);
 
-    fprintf(f, "%llu\n", pixWhite.pixels);
-    fprintf(f, "%llu\n", pixGreen.pixels);
-    fprintf(f, "%llu\n", pixGreen.price);
-    fprintf(f, "%llu\n", pixRed.pixels);
-    fprintf(f, "%llu\n", pixRed.price);
-    fprintf(f, "%llu\n", pixYellow.pixels);
-    fprintf(f, "%llu\n", pixYellow.price);
-    fprintf(f, "%llu\n", pixPink.pixels);
-    fprintf(f, "%llu\n", pixPink.price);
-    fprintf(f, "%llu\n", pixDarkBlue.pixels);
-    fprintf(f, "%llu\n", pixDarkBlue.price);
-    fprintf(f, "%llu\n", pixDarkPurple.pixels);
-    fprintf(f, "%llu\n", pixDarkPurple.price);
-    fprintf(f, "%llu\n", pixLightPeach.pixels);
-    fprintf(f, "%llu\n", pixLightPeach.price);
-    fprintf(f, "%llu\n", pixPico.pixels);
-    fprintf(f, "%llu\n", pixPico.price);
-    fprintf(f, "%f\n", production_accumulator);
-
-    fclose(f);
-    sfx(0);
+    sfx(0); // звук успешного сохранения
 }
 
-void load_game() {
-    FILE* f = fopen(SAVE_FILE, "r");
-    if (f == NULL) return;
+void load_game(void) {
+    // Загружаем целочисленные поля
+    pixWhite.pixels = load(SLOT_WHITE_PIXELS);
+    pixGreen.pixels = load(SLOT_GREEN_PIXELS);
+    pixGreen.price = load(SLOT_GREEN_PRICE);
+    pixRed.pixels = load(SLOT_RED_PIXELS);
+    pixRed.price = load(SLOT_RED_PRICE);
+    pixYellow.pixels = load(SLOT_YELLOW_PIXELS);
+    pixYellow.price = load(SLOT_YELLOW_PRICE);
+    pixPink.pixels = load(SLOT_PINK_PIXELS);
+    pixPink.price = load(SLOT_PINK_PRICE);
+    pixDarkBlue.pixels = load(SLOT_DARKBLUE_PIXELS);
+    pixDarkBlue.price = load(SLOT_DARKBLUE_PRICE);
+    pixDarkPurple.pixels = load(SLOT_DARKPURPLE_PIXELS);
+    pixDarkPurple.price = load(SLOT_DARKPURPLE_PRICE);
+    pixLightPeach.pixels = load(SLOT_PEACH_PIXELS);
+    pixLightPeach.price = load(SLOT_PEACH_PRICE);
+    pixPico.pixels = load(SLOT_PICO_PIXELS);
+    pixPico.price = load(SLOT_PICO_PRICE);
 
-    uint64_t w, g, pr, r, rp, y, yp, p, pp, b, bp, pu, pup, pe, pep, pico, picop;
-    double acc;
-    // Теперь 17 целых (15 старых + 2 для pixPico) + 1 дробное = 18 аргументов
-    if (fscanf(f, "%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%lf\n",
-               &w, &g, &pr, &r, &rp, &y, &yp, &p, &pp, &b, &bp, &pu, &pup, &pe, &pep, &pico, &picop, &acc) == 18) {
-        pixWhite.pixels = w;
-        pixGreen.pixels = g;
-        pixGreen.price = pr;
-        pixRed.pixels = r;
-        pixRed.price = rp;
-        pixYellow.pixels = y;
-        pixYellow.price = yp;
-        pixPink.pixels = p;
-        pixPink.price = pp;
-        pixDarkBlue.pixels = b;
-        pixDarkBlue.price = bp;
-        pixDarkPurple.pixels = pu;
-        pixDarkPurple.price = pup;
-        pixLightPeach.pixels = pe;
-        pixLightPeach.price = pep;
-        pixPico.pixels = pico;
-        pixPico.price = picop;
-        production_accumulator = acc;
-    }
-    fclose(f);
+    // Загружаем double
+    union { double d; uint64_t u; } conv;
+    conv.u = load(SLOT_ACCUMULATOR);
+    production_accumulator = conv.d;
 
+    // Сброс времени для избежания скачка delta_time
     last_time = clock();
     first_update = false;
     sfx(0);
+}
+
+void init(void) {
+    // Создаём файл сохранения с начальными значениями
+    if (!is_save()) save_game();
 }
 
 void update(void) {
