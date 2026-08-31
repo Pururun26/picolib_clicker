@@ -9,6 +9,7 @@
 #include "picolib.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <raylib.h>
 
 #define TARGET_WINDOW_SIZE 512
@@ -377,6 +378,194 @@ picolib_mouse mousep(void) {
 #endif
 
 
+// --- API для сохранение и загрузки ---
+#if PICOLIB_USE_SAVE == 1
+
+bool save_text(const char *fileName, const char *text) { return SaveFileText(fileName, text); }
+char* load_text(const char* fileName) { return LoadFileText(fileName); }
+
+bool save_data(const char *fileName, void *data, int bytesToWrite) { return SaveFileData(fileName, data, bytesToWrite); }
+unsigned char* load_data(const char* fileName, int* bytesRead) { return LoadFileData(fileName, bytesRead); }
+
+void unload_text(char* text) { UnloadFileText(text); }
+void unload_data(unsigned char* data) { UnloadFileData(data); }
+
+// Массив слотов
+static uint64_t storage_data[PICOLIB_SAVE_SLOTS];
+static bool storage_loaded = false;
+
+// Внутренняя функция для сохранения всего массива
+static bool storage_save_all(void) {
+    TraceLog(LOG_INFO, "DEBUG: storage_save_all() called"); // добавить
+    return save_data(PICOLIB_SAVE_FILE, storage_data, sizeof(storage_data));
+}
+
+// Внутренняя функция для загрузки всего массива
+static bool storage_load_all(void) {
+    int size;
+    unsigned char* data = load_data(PICOLIB_SAVE_FILE, &size);
+    if (data && size == sizeof(storage_data)) {
+        memcpy(storage_data, data, sizeof(storage_data));
+        unload_data(data);
+        storage_loaded = true;
+        return true;
+    }
+    // Если файла нет или он повреждён — инициализируем нулями
+    memset(storage_data, 0, sizeof(storage_data));
+    storage_loaded = true;
+    // Сразу сохраняем, чтобы создать файл
+    storage_save_all();
+    return false;
+}
+
+
+
+// Публичный API: получить значение по позиции
+uint64_t load(uint8_t pos) {
+    if (pos >= PICOLIB_SAVE_SLOTS) return 0;
+    if (!storage_loaded) {
+        storage_load_all();
+    }
+    return storage_data[pos];
+}
+
+// Публичный API: установить значение по позиции и сразу сохранить
+// Возвращает true, если сохранение прошло успешно, иначе false.
+void save(uint8_t pos, uint64_t value) {
+    if (pos >= PICOLIB_SAVE_SLOTS) return;
+    if (!storage_loaded) storage_load_all();
+    storage_data[pos] = value;
+    // return storage_save_all(); // возвращаем результат сохранения
+}
+
+bool is_save(void) {
+    return FileExists(PICOLIB_SAVE_FILE);
+}
+#endif
+
+
+// -- API для карты ---
+uint8_t sprite_flags[SPRITE_COUNT] = {0};
+
+int fget(int sprite_id, int bit) {
+    if (sprite_id < 0 || sprite_id >= SPRITE_COUNT) return 0;
+    if (bit < 0 || bit > 7) return 0;
+    return (sprite_flags[sprite_id] >> bit) & 1;
+}
+
+void fset(int sprite_id, int bit, int value) {
+    if (sprite_id < 0 || sprite_id >= SPRITE_COUNT) return;
+    if (bit < 0 || bit > 7) return;
+    if (value) sprite_flags[sprite_id] |= (1 << bit);
+    else sprite_flags[sprite_id] &= ~(1 << bit);
+}
+
+#if PICOLIB_USE_MAP == 1
+uint8_t map[MAP_ROWS][MAP_COLS] = {0};
+
+// Парсит одну строку CSV, извлекая целые числа (0-255) и сохраняя их в массив out.
+// Возвращает количество распарсенных чисел.
+static int parse_csv_line(const char* line, uint8_t* out, int max_count) {
+    int count = 0;
+    const char* p = line;
+    
+    while (*p && count < max_count) {
+        // Пропускаем пробелы и табуляции
+        while (*p == ' ' || *p == '\t') p++;
+        
+        // Если конец строки или спецсимволы перевода – выходим
+        if (*p == '\0' || *p == '\n' || *p == '\r') break;
+        
+        // Парсим число (только десятичные цифры)
+        int val = 0;
+        while (*p >= '0' && *p <= '9') {
+            val = val * 10 + (*p - '0');
+            p++;
+        }
+        out[count++] = (uint8_t)val;
+        
+        // Пропускаем запятую и пробелы после неё
+        while (*p == ',' || *p == ' ' || *p == '\t') p++;
+    }
+    
+    return count;
+}
+
+// Вспомогательная функция загрузки карты из CSV
+static void load_map_from_csv(const char* filename) {
+    char* file_content = LoadFileText(filename);
+    if (!file_content) {
+        TraceLog(LOG_WARNING, "PICOLIB: Map file '%s' not found. Using empty map.", filename);
+        return;
+    }
+
+    int row = 0;
+    // Разбиваем файл на строки. Используем внешний strtok (один раз, без вложенности)
+    char* line = strtok(file_content, "\r\n");
+    while (line != NULL && row < MAP_ROWS) {
+        // Парсим строку и заполняем map[row]
+        parse_csv_line(line, map[row], MAP_COLS);
+        row++;
+        line = strtok(NULL, "\r\n");
+    }
+
+    UnloadFileText(file_content);
+    TraceLog(LOG_INFO, "PICOLIB: Map loaded from '%s'", filename);
+}
+
+// Основная функция рисования карты
+void map_draw(int celx, int cely, int sx, int sy, int celw, int celh, uint8_t layer) {
+    static int map_loaded = 0;
+    if (!map_loaded) {
+        load_map_from_csv(PICOLIB_MAP_FILE);
+        map_loaded = 1;
+    }
+
+    if (celw <= 0 || celh <= 0) return;
+
+    for (int row = 0; row < celh; row++) {
+        for (int col = 0; col < celw; col++) {
+            int map_x = celx + col;
+            int map_y = cely + row;
+            if (map_x < 0 || map_x >= MAP_COLS || map_y < 0 || map_y >= MAP_ROWS) continue;
+
+            uint8_t tile_id = map[map_y][map_x];
+            if (tile_id == 0) continue;
+
+            if (layer != 0) {
+                if ((sprite_flags[tile_id] & layer) != layer) continue;
+            }
+
+            // Без компенсации: карта будет двигаться вместе с камерой
+            int pixel_x = sx + col * 8;
+            int pixel_y = sy + row * 8;
+            spr_pro(tile_id, pixel_x, pixel_y, 1, 1, 0, 0);
+        }
+    }
+}
+
+// Рисует всю карту (без фильтра по слоям)
+void map_full(void) {
+    map_draw(0, 0, 0, 0, MAP_COLS, MAP_ROWS, 0);
+}
+
+// Рисует всю карту с фильтром по слою
+void map_full_layer(uint8_t layer) {
+    map_draw(0, 0, 0, 0, MAP_COLS, MAP_ROWS, layer);
+}
+
+uint8_t mget(int x, int y) {
+    if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return 0;
+    return map[y][x];
+}
+
+void mset(int x, int y, uint8_t id) {
+    if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return;
+    map[y][x] = id;
+}
+#endif
+
+
 // --- API для столкновение ---
 bool col_rect(Rect* a, Rect* b) {
     int16_t a_left = a->x;
@@ -425,6 +614,15 @@ int main(void)
     target = LoadRenderTexture(PICOLIB_WIDTH, PICOLIB_HEIGHT);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
+
+    #if PICOLIB_USE_SAVE == 1
+        int autosave_counter = 0;
+        const int AUTOSAVE_INTERVAL = 60 * 10 * 60; // 10 минут при 60 FPS = 36000 кадров
+    #endif
+
+    // Вызываем пользовательскую инициализацию
+    init();
+
     while (!WindowShouldClose())
     {
         update();
@@ -435,6 +633,16 @@ int main(void)
         if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_P)) {
             show_fps = !show_fps;
         }
+
+        #if PICOLIB_USE_SAVE == 1
+            // Автосохранение
+            autosave_counter++;
+            if (autosave_counter >= AUTOSAVE_INTERVAL) {
+                storage_save_all();
+                autosave_counter = 0;
+                // можно вывести сообщение "Autosaved"
+            }
+        #endif
 
         BeginTextureMode(target);
         draw();
@@ -480,6 +688,11 @@ int main(void)
             if (sounds_loaded[i]) UnloadSound(sounds[i]);
         }
         CloseAudioDevice();
+    #endif
+
+
+    #if PICOLIB_USE_SAVE == 1
+        storage_save_all();
     #endif
 
     ShowCursor();
